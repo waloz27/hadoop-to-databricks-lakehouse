@@ -84,7 +84,7 @@ Los notebooks están en [`notebooks/`](notebooks/):
 | `04_mediciones_tuning` | Experimento de particiones de shuffle y AQE |
 | `05_archivos_pequenos` | Experimento del problema de archivos pequeños y `OPTIMIZE` |
 
-Los notebooks 01 a 03 corrieron en cómputo **(completar: clásico o serverless)** y los notebooks 04 y 05 en el cluster clásico de nodo único.
+Los notebooks 01 a 03 corrieron en cómputo y los notebooks 04 y 05 en el cluster clásico de nodo único.
 
 
 ![Catálogo lakehouse con sus esquemas](docs/img/03-catalogo.png)
