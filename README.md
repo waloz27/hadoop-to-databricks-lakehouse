@@ -121,13 +121,13 @@ Los notebooks 01 a 03 corrieron en cómputo y los notebooks 04 y 05 en el cluste
 
 # Mediciones de rendimiento
 
-Condiciones comunes: cluster clásico de nodo único `Standard_D4ds_v4` (4 vCPU, 16 GB), runtime 18 LTS, Photon apagado, una consulta fija y una sola variable cambiando por experimento. Cada medición usa un calentamiento previo que no cuenta y se reporta la **mediana** de las Ejecuciones, porque se ve menos afectada por una corrida atípica que el promedio.
+Condiciones comunes: cluster clásico de nodo único `Standard_D4ds_v4` (4 vCPU, 16 GB), runtime 18 LTS, Photon apagado, una consulta fija y una sola variable cambiando por experimento. Cada medición usa un calentamiento previo que no cuenta y se reporta la **mediana** de las corridas, porque se ve menos afectada por una corrida atípica que el promedio.
 
 ## Experimento 1: particiones de shuffle y AQE
 
 Consulta: viajes y tarifa promedio por pareja de zona de recogida y zona de destino, sobre 6,6 millones de filas de `silver.yellow_trips_clean`. La consulta se ejecuta con formato `noop` (se calcula todo, pero no se escribe el resultado), para medir el cómputo y no la escritura.
 
-| Configuración | Mediana | Ejecuciones (s) |
+| Configuración | Mediana | corridas (s) |
 |---|---|---|
 | AQE apagado, 4 particiones | 4,1 s | 4,5 / 4,1 / 3,4 |
 | AQE apagado, 16 particiones | 4,0 s | 4,0 / 4,8 / 3,5 |
@@ -137,16 +137,16 @@ Consulta: viajes y tarifa promedio por pareja de zona de recogida y zona de dest
 
 **Lectura:** con solo 4 núcleos, demasiadas particiones de shuffle perjudican mucho: con 200 hay unas 50 tareas por núcleo y con 2000 unas 500, así que el tiempo se va en planificar y lanzar tareas diminutas y no en procesar datos. Es el mismo problema conocido de YARN: demasiados contenedores pequeños para un trabajo que cabe en pocos. AQE con el valor por defecto fue la mejor configuración, porque agrupa las particiones pequeñas en tiempo de ejecución y evita tener que adivinar el número correcto.
 
-**Resultado:** la diferencia entre AQE (3,4 s) y 4 o 16 particiones (4,0 s) es pequeña, con solo 3 Ejecuciones y rangos que casi se tocan, así que no la considero concluyente. Lo claro es que 200 y sobre todo 2000 particiones son peores.
+**Resultado:** la diferencia entre AQE (3,4 s) y 4 o 16 particiones (4,0 s) es pequeña, con solo 3 corridas y rangos que casi se tocan, así que no la considero concluyente. Lo claro es que 200 y sobre todo 2000 particiones son peores.
 
 
 ![Resultados del experimento de shuffle](docs/img/06-medicion-shuffle.png)
 
 ## Experimento 2: archivos pequeños y OPTIMIZE
 
-Se creó una copia de la tabla silver fragmentada en 400 archivos (unos 440 KB cada uno) y se midió una consulta de filtro y agregación (viajes de Manhattan por día). Después se ejecutó `OPTIMIZE`, que une los archivos pequeños en archivos grandes, y se midió de nuevo. El caché de disco de Databricks se desactivó para que no escondiera el efecto. Ambas mediciones usaron 5 Ejecuciones, hechas seguidas en la misma sesión.
+Se creó una copia de la tabla silver fragmentada en 400 archivos (unos 440 KB cada uno) y se midió una consulta de filtro y agregación (viajes de Manhattan por día). Después se ejecutó `OPTIMIZE`, que une los archivos pequeños en archivos grandes, y se midió de nuevo. El caché de disco de Databricks se desactivó para que no escondiera el efecto. Ambas mediciones usaron 5 corridas, hechas seguidas en la misma sesión.
 
-| | Archivos | Tamaño | Mediana | Ejecuciones (s) |
+| | Archivos | Tamaño | Mediana | corridas (s) |
 |---|---|---|---|---|
 | Antes de `OPTIMIZE` | 400 | ~168 MB | 3,2 s | 3,1 / 3,6 / 4,0 / 2,9 / 3,2 |
 | Después de `OPTIMIZE` | 3 | ~151 MB | **1,2 s** | 1,3 / 1,2 / 1,2 / 1,1 / 1,1 |
@@ -159,7 +159,7 @@ Se creó una copia de la tabla silver fragmentada en 400 archivos (unos 440 KB c
 ## Límites de las mediciones
 
 - Una sola consulta por experimento, una sola tabla y un cluster de 4 núcleos: las conclusiones sirven para este tamaño de datos y de cluster, no son una regla general.
-- **Variabilidad entre sesiones:** el tiempo base de la consulta fragmentada fue de 4,9 s en una primera medición de 3 Ejecuciones y de 3,2 s en la de 5 Ejecuciones, con la misma tabla y sin cambios. Por eso solo se comparan mediciones hechas seguidas en la misma sesión.
+- **Variabilidad entre sesiones:** el tiempo base de la consulta fragmentada fue de 4,9 s en una primera medición de 3 corridas y de 3,2 s en la de 5 corridas, con la misma tabla y sin cambios. Por eso solo se comparan mediciones hechas seguidas en la misma sesión.
 - No se probó Z-ORDER ni clustering: con una tabla de unos 150 MB el efecto sería poco visible.
 - Con 4 núcleos no se puede demostrar el efecto de escalar el número de nodos.
 
@@ -263,4 +263,4 @@ terraform destroy
 
 **Wilson Andres Lozano** — administrador de plataformas de datos (Hadoop, Cloudera, Azure), Databricks y plataformas de datos en la nube.
 Certificaciones Databricks: Fundamentals y Administrator.
-LinkedIn: (agrega aquí el enlace a tu perfil)
+LinkedIn: https://www.linkedin.com/in/wilson-andres-lozano/
