@@ -13,10 +13,11 @@ Nace de mi experiencia de más de 12 años administrando clusters Hadoop y Cloud
 3. [Restricciones de la suscripción y decisiones](#restricciones-de-la-suscripción-y-decisiones)
 4. [Datos y pipeline](#datos-y-pipeline)
 5. [Mediciones de rendimiento](#mediciones-de-rendimiento)
-6. [Equivalencias Hadoop a Databricks](#equivalencias-hadoop-a-databricks)
-7. [Lo que no se hizo y límites](#lo-que-no-se-hizo-y-límites)
-8. [Cómo reproducirlo](#cómo-reproducirlo)
-9. [Estructura del repositorio](#estructura-del-repositorio)
+6. [Gobierno, política de cómputo y orquestación](#gobierno-política-de-cómputo-y-orquestación)
+7. [Equivalencias Hadoop a Databricks](#equivalencias-hadoop-a-databricks)
+8. [Lo que no se hizo y límites](#lo-que-no-se-hizo-y-límites)
+9. [Cómo reproducirlo](#cómo-reproducirlo)
+10. [Estructura del repositorio](#estructura-del-repositorio)
 
 ---
 
@@ -37,7 +38,7 @@ Los archivos Parquet de origen se simulan como una tabla Hive particionada (un a
 
 # Infraestructura (Terraform)
 
-Terraform crea el grupo de recursos y el workspace de Azure Databricks. El catálogo, los esquemas y las tablas se crearon después desde el propio workspace.
+Terraform crea el grupo de recursos y el workspace de Azure Databricks. El catálogo, los esquemas, las tablas, los permisos, la política de cómputo y el job se crearon después desde el propio workspace y están documentados en [`docs/`](docs/).
 
 | Elemento | Valor |
 |---|---|
@@ -84,7 +85,7 @@ Los notebooks están en [`notebooks/`](notebooks/):
 | `04_mediciones_tuning` | Experimento de particiones de shuffle y AQE |
 | `05_archivos_pequenos` | Experimento del problema de archivos pequeños y `OPTIMIZE` |
 
-Los notebooks 01 a 03 corrieron en cómputo y los notebooks 04 y 05 en el cluster clásico de nodo único.
+Los notebooks 01 a 03 corrieron en cómputo **serverless** y los notebooks 04 y 05 en el cluster clásico de nodo único.
 
 
 ![Catálogo lakehouse con sus esquemas](docs/img/03-catalogo.png)
@@ -99,7 +100,7 @@ Los notebooks 01 a 03 corrieron en cómputo y los notebooks 04 y 05 en el cluste
 | Regla | Motivo |
 |---|---|
 | Fechas de recogida y de bajada no nulas | Sin fechas no se puede calcular la duración |
-| Recogida entre el 1 de enero y el 28 de febrero de 2026 |
+| Recogida entre el 1 de enero y el 28 de febrero de 2026 | Estos archivos pueden traer registros con fechas fuera del período |
 | Duración entre 1 y 180 minutos | Descarta viajes de cero segundos o de días |
 | Distancia entre 0,1 y 100 millas | Descarta registros imposibles |
 | Tarifa y total mayores que cero | Descarta cancelaciones y errores |
@@ -165,6 +166,51 @@ Se creó una copia de la tabla silver fragmentada en 400 archivos (unos 440 KB c
 
 ---
 
+# Gobierno, política de cómputo y orquestación
+
+## Permisos en Unity Catalog
+
+Se creó el grupo `analistas` (a nivel de cuenta) y se le dieron los permisos mínimos para leer los agregados:
+
+- `USE CATALOG` sobre `lakehouse`.
+- `USE SCHEMA` y `SELECT` sobre `lakehouse.gold`.
+
+No tiene acceso a `bronze` ni a `silver`: es el principio de mínimo privilegio. Se verificó con `SHOW GRANTS`, y en esa revisión apareció `BROWSE` sobre el catálogo para el grupo `account users`, que no asigné yo (parece un permiso por defecto). Los comandos están en [`docs/sql/unity-catalog.sql`](docs/sql/unity-catalog.sql).
+
+**Límite:** la cuenta tiene un solo usuario real, así que no probé el acceso de una segunda persona.
+
+![Permisos en Unity Catalog](docs/img/08-permisos.png)
+
+## Cluster policy
+
+La política `politica-lab-nodo-unico` ([`docs/cluster-policy.json`](docs/cluster-policy.json)) limita lo que se puede crear:
+
+| Regla | Valor |
+|---|---|
+| Tipo de nodo | Solo `Standard_D4ds_v4` o `Standard_D4s_v4` |
+| Workers | 0 (nodo único), por la cuota de 6 vCPU |
+| Autoterminación | Entre 5 y 30 minutos (10 por defecto) |
+| Photon | Apagado (bloqueado) |
+| Etiqueta de costo | `proyecto` fija |
+
+En el formulario de creación comprobé que solo ofrece esos dos nodos y que Photon queda bloqueado. No creé un cluster con la política en ejecución.
+
+**Sobre la equivalencia con YARN:** es parcial. Una cola de YARN reparte capacidad entre usuarios, mientras que una cluster policy limita qué configuración se puede crear.
+
+![Cluster policy en el formulario de cómputo](docs/img/09-cluster-policy.png)
+
+## Workflow
+
+El job `pipeline-taxi-lakehouse` ejecuta en cadena `bronze` → `silver` → `gold` sobre cómputo serverless ([`docs/workflow-job.json`](docs/workflow-job.json)).
+
+- Una ejecución exitosa: bronze 44 s, silver 18 s, gold 14 s.
+- **Es idempotente:** tras reejecutarlo, `silver` siguió con 6.630.904 filas, y el historial de Delta muestra una versión nueva en vez de datos duplicados.
+- **Límites:** no tiene programación, reintentos ni alertas, y solo se ejecutó una vez.
+
+![Workflow del pipeline](docs/img/10-workflow.png)
+
+---
+
 # Equivalencias Hadoop a Databricks
 
 | Hadoop / Cloudera | Databricks en este proyecto | Estado |
@@ -174,20 +220,21 @@ Se creó una copia de la tabla silver fragmentada en 400 archivos (unos 440 KB c
 | Hive Metastore | Unity Catalog | Hecho (catálogo y esquemas) |
 | `mapreduce.job.reduces` / reducers | `spark.sql.shuffle.partitions` y AQE | Medido (experimento 1) |
 | Problema de archivos pequeños en HDFS | Compactación con `OPTIMIZE` | Medido (experimento 2) |
-| Ranger (permisos) | `GRANT` / `REVOKE` en Unity Catalog | No implementado |
-| Colas de YARN | Cluster policies y pools | No implementado |
-| Oozie | Workflows (jobs) | No implementado |
+| Ranger (permisos) | `GRANT` / `REVOKE` en Unity Catalog | Hecho (un grupo, un esquema) |
+| Colas de YARN | Cluster policies (equivalencia parcial) | Hecho |
+| Oozie | Workflows (jobs) | Hecho (una ejecución manual) |
 | Cluster de N nodos | Cluster de un solo nodo (limitado por cuota) | Limitado por cuota |
 
 ---
 
 # Lo que no se hizo y límites
 
-- **Permisos finos de Unity Catalog** (grupos, `GRANT`): requieren grupos a nivel de cuenta, y no verifiqué si esta cuenta tenía los privilegios de administración necesarios.
-- **Cluster policies** para limitar tipos de nodo y tiempos de inactividad: se aplicó la terminación automática a mano en el cluster, pero no se definió una política.
-- **Workflows** que programen el pipeline: los notebooks se ejecutaron manualmente.
+- **Permisos:** solo un grupo y un esquema. No se probó el acceso con un segundo usuario ni se configuró seguridad a nivel de fila o de columna.
+- **Cluster policy:** no está definida con Terraform y no se probó con un cluster en ejecución.
+- **Workflow:** sin programación, reintentos ni alertas.
+- **Terraform solo cubre el workspace.** El catálogo, el volumen, el grupo, los permisos, la política y el job se crearon a mano y están documentados en `docs/`.
 - **Clusters multinodo:** la cuota regional de 6 vCPU lo impide.
-- **Almacenamiento propio (ADLS Gen2 con Terraform):** el catálogo usa almacenamiento por defecto, validado desde el cluster clásico. Montar el almacenamiento propio sería una mejora natural.
+- **Almacenamiento propio (ADLS Gen2 con Terraform):** el catálogo usa almacenamiento por defecto, validado desde el cluster clásico.
 - **Pruebas automatizadas y CI/CD** del pipeline.
 - El workspace y sus datos son temporales: se destruyen con `terraform destroy` al terminar. Lo que perdura es el código y esta documentación.
 
@@ -214,7 +261,13 @@ terraform plan
 terraform apply
 ```
 
-3. En el workspace creado: crear el catálogo `lakehouse` y los esquemas `bronze`, `silver` y `gold`; crear el volumen `lakehouse.bronze.landing`; subir los archivos Parquet de enero y febrero de 2026 y el CSV de zonas; y ejecutar los notebooks en orden (`01` a `05`).
+3. En el workspace creado:
+   - Crear el catálogo `lakehouse` desde la interfaz (Catálogo → Agregar un catálogo), que usa almacenamiento por defecto.
+   - Crear el grupo `analistas` (Configuración → Identidad y acceso → Grupos) y ejecutar [`docs/sql/unity-catalog.sql`](docs/sql/unity-catalog.sql) para crear los esquemas, el volumen y los permisos.
+   - Subir al volumen `lakehouse.bronze.landing` los archivos Parquet de enero y febrero de 2026 y el CSV de zonas.
+   - Crear la directiva de cómputo a partir de [`docs/cluster-policy.json`](docs/cluster-policy.json).
+   - Ejecutar los notebooks `01` a `03` en orden, o crear el job `pipeline-taxi-lakehouse` con esas tres tareas (referencia en [`docs/workflow-job.json`](docs/workflow-job.json)).
+   - Ejecutar los notebooks `04` y `05` en el cluster clásico de nodo único.
 
 4. Al terminar, destruir todo para no gastar crédito:
 
@@ -222,7 +275,7 @@ terraform apply
 terraform destroy
 ```
 
-> **Nota importante:** la región Brazil South se eligió por las restricciones de **mi** suscripción (ver [`docs/restricciones-y-decisiones.md`](docs/restricciones-y-decisiones.md)). En otra suscripción probablemente baste con cambiar la variable `location` en `terraform/variables.tf`, y la cuota y las máquinas disponibles serán distintas. Conviene repetir las consultas de cuota (`az vm list-usage`) antes de elegir un tipo de nodo.
+> **Nota importante:** la región Brazil South se eligió por las restricciones de mi suscripción (ver [`docs/restricciones-y-decisiones.md`](docs/restricciones-y-decisiones.md)). En otra suscripción probablemente baste con cambiar la variable `location` en `terraform/variables.tf`, y la cuota y las máquinas disponibles serán distintas. Conviene repetir las consultas de cuota (`az vm list-usage`) antes de elegir un tipo de nodo.
 
 ---
 
@@ -246,7 +299,10 @@ terraform destroy
 │   └── 05_archivos_pequenos.py
 └── docs/
     ├── restricciones-y-decisiones.md
-    ├── equivalencias.md
+    ├── cluster-policy.json
+    ├── workflow-job.json
+    ├── sql/
+    │   └── unity-catalog.sql
     └── img/
         ├── 01-arquitectura.png
         ├── 02-workspace-azure.png
@@ -254,7 +310,11 @@ terraform destroy
         ├── 04-control-calidad-silver.png
         ├── 05-gold-zonas-top.png
         ├── 06-medicion-shuffle.png
-        └── 07-medicion-optimize.png
+        ├── 07-medicion-optimize.png
+        ├── 08-permisos.png
+        ├── 09-cluster-policy.png
+        ├── 10-workflow.png
+        └── 11-sql-warehouse.png
 ```
 
 ---
