@@ -1,0 +1,46 @@
+{
+  "node_type_id": {
+    "type": "allowlist",
+    "values": [
+      "Standard_D4ds_v4",
+      "Standard_D4s_v4"
+    ],
+    "defaultValue": "Standard_D4ds_v4"
+  },
+  "driver_node_type_id": {
+    "type": "allowlist",
+    "values": [
+      "Standard_D4ds_v4",
+      "Standard_D4s_v4"
+    ],
+    "defaultValue": "Standard_D4ds_v4"
+  },
+  "num_workers": {
+    "type": "fixed",
+    "value": 0,
+    "hidden": true
+  },
+  "spark_conf.spark.databricks.cluster.profile": {
+    "type": "fixed",
+    "value": "singleNode",
+    "hidden": true
+  },
+  "autotermination_minutes": {
+    "type": "range",
+    "defaultValue": 10,
+    "minValue": 5,
+    "maxValue": 30
+  },
+  "runtime_engine": {
+    "type": "fixed",
+    "value": "STANDARD"
+  },
+  "custom_tags.ResourceClass": {
+    "type": "fixed",
+    "value": "SingleNode"
+  },
+  "custom_tags.proyecto": {
+    "type": "fixed",
+    "value": "hadoop-to-databricks-lakehouse"
+  }
+}
